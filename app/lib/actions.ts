@@ -11,11 +11,17 @@ son de servidor, y por lo tanto no se ejecutan ni se envían al cliente */
 
 const CreateInvoiceFormSchema = z.object({
   id: z.string(),
-  customerId: z.string(),
-  amount: z.coerce.number(),
-  status: z.enum(['pending', 'paid']),
-  date: z.string()
-})
+  customerId: z.string({
+    invalid_type_error: 'Please select a customer.',
+  }),
+  amount: z.coerce
+    .number()
+    .gt(0, { message: 'Please enter an amount greater than $0.' }),
+  status: z.enum(['pending', 'paid'], {
+    invalid_type_error: 'Please select an invoice status.',
+  }),
+  date: z.string(),
+});
 
 const CreateInvoiceSchema = CreateInvoiceFormSchema.omit({
   id: true,
@@ -27,15 +33,42 @@ const UpdateInvoice = CreateInvoiceFormSchema.omit({
   date: true 
 });
 
-export async function createInvoice(formData: FormData) {
-  const { customerId, amount, status } = CreateInvoiceSchema.parse({
+export type State = {
+  errors?: {
+    customerId?: string[];
+    amount?: string[];
+    status?: string[];
+  };
+  message?: string | null;
+  values?: {
+    customerId?: string;
+    amount?: string;
+    status?: string;
+  }
+};
+
+export async function createInvoice(prevState: State, formData: FormData) {
+  const validatedFields = CreateInvoiceSchema.safeParse({
     customerId: formData.get('customerId'),
     amount: formData.get('amount'),
     status: formData.get('status'),
   })
 
+  if (!validatedFields.success) {
+    return {
+      errors: validatedFields.error.flatten().fieldErrors,
+      message: 'Missing Fields. Failed to Create Invoice.',
+      values: {
+        customerId: String(formData.get('customerId') ?? ""),
+        amount: String(formData.get('amount') ?? ""),
+        status: String(formData.get('status') ?? ""),
+      }
+    };
+  }
+
+  const { customerId, amount, status } = validatedFields.data;
   const amountInCents = amount * 100
-  const [date] = new Date().toISOString().split('T')
+  const [date] = new Date().toISOString().split('T')[0]
 
   try {
     await sql`
@@ -43,7 +76,6 @@ export async function createInvoice(formData: FormData) {
       VALUES (${customerId}, ${amountInCents}, ${status}, ${date})
     `
   } catch(e) {
-    console.error(e)
     return {
       message: 'Database Error: Failed to Create Invoice.',
     };
